@@ -1,71 +1,52 @@
 # Weekly Multi-Channel Order Pipeline (Excel VBA)
 
-A single Excel VBA module (~1,000 lines) that replaced roughly a month of
-recurring manual data-entry work with a set of one-click macros. Built after
-being handed a fully manual weekly workflow and immediately recognizing that
-every step of it was mechanical enough to automate.
+An Excel VBA module (~1,500 lines) that processes weekly radiopharmaceutical orders in five steps. Each step is a separate macro that asks for the week number and writes that week's results into the matching sheet.
 
-> **Note:** This is a sanitized/anonymized version of a production tool used
-> in my actual job. All hospital/client codes and the distributor's name have
-> been replaced with generic placeholders (`HOSP01`-`HOSP24`, `PARTNER_CO`),
-> and shipment-route labels have been generalized (`GroupA`/`GroupB`/`GroupC`).
-> Business logic and structure are preserved as-is. Some inline comments
-> remain in Korean, the original working language.
+> **Note:** This is a sanitized/anonymized version of a tool used in a real workflow. All hospital/client codes and the distributor's name have been replaced with generic placeholders (`HOSP01`-`HOSP25`, `PARTNER_CO`), and shipment-route labels have been generalized (`GroupA` / `GroupB` / `GroupC`). Business logic and structure are preserved as-is. Some inline comments remain in Korean, the original working language.
 
-## Background
+## The 5 steps
 
-A colleague had built (and maintained entirely by hand) a set of weekly
-Excel reports tracking radiopharmaceutical capsule orders across two order
-channels and roughly two dozen hospital clients grouped into shipment
-batches. By her own account, getting the manual process to a point where it
-ran without errors took about a month. I inherited this workflow, and
-within a day of looking at it, rebuilt the entire thing as VBA macros that
-reproduce the same output.
+| Step | Macro | What it does |
+|---|---|---|
+| 1 | `캡슐데이터_회사폼_자동생성` | Reads the order sheets and fills the company form (`Sheet1`) by group and weekday, inserting rows when a block runs out of slots |
+| 2 | `Matrix_신규Week_추가` | Adds a new week (Diag / Ther / Solution columns) to the Matrix sheet, flags new and dropped hospitals by color, updates subtotals |
+| 3 | `Step3_PerHospital_추가` | Appends the week's rows to the "Per hospital" log (by shipment, hospital, mCi) and refreshes the pivot |
+| 4 | `Step4_ContainerLog_추가` | Appends the week's shipment quantities to the container log |
+| 5 | `Step5_Summary_추가` | Appends the week's block (25 mCi, 5 mCi, 2 mCi, Solution, all other shipments) to the Summary sheet |
 
-## What the pipeline does
+The pivot refresh is also available separately as `Step3b_PerHospital_Pivot_갱신`. Existing weeks are never overwritten silently: if the week already exists, the macro asks before replacing it.
 
-| Function | What it does |
-|---|---|
-| `CapsuleData_FirstRound_Generate` | Reads two raw order-data sheets, buckets every order line by client group + delivery day, and fills a pre-formatted weekly capsule sheet — including the low-dose (2/5mCi) split that has to route to a different cell block than standard doses |
-| `Matrix_신규Week_추가` | Adds a new week's column block to a running order-frequency matrix; grows merged header/data ranges safely (3-stage unmerge → insert → re-merge) instead of breaking existing merged cells |
-| `InsertHospitalAtPosition` | Inserts a newly-onboarded client at a fixed position in the matrix (not just appended at the end) without disturbing the row numbering of existing clients |
-| `Step3_PerHospital_추가` / `Step3b_PerHospital_Pivot_갱신` | Appends this week's per-client mCi/quantity totals to a running log, then refreshes the pivot table that summarizes it — the pivot's source range is reset dynamically each run instead of staying hardcoded |
-| `Step4_ContainerLog_추가` | Logs this week's total shipment quantities by route (3 fixed rows: two "Group B" shipments and one "Group A" shipment), skipping any route with zero quantity |
-| `Step5_Summary_추가` | Aggregates the week into a single summary block by dose tier (100/50/30/25/5/2 mCi + solution), computing high-dose/low-dose/all-shipment rollups |
+## Input data
 
-## Why this was worth automating
+Two sheets hold the raw orders:
 
-The original manual process wasn't just slow — its error rate came from the
-sheer repetition (tens of raw order lines every week, expanded and
-re-checked by hand) rather than any real complexity in the underlying
-logic. Once written down as rules, the whole thing collapsed into deterministic
-steps:
+- `주문데이터` (first-round orders)
+- `2차주문데이터` (second-round orders)
 
-- **Bucket-then-fill instead of read-then-type**: orders are first grouped
-  into an in-memory dictionary keyed by (client group, day), then written to
-  the sheet in one pass — so a client with orders on three different days
-  ends up in the right three cells without anyone manually cross-referencing
-  a calendar.
-- **Position-aware insertion**: `InsertHospitalAtPosition` and `GrowBlock`
-  handle the case that a client needs to be spliced into row 19 of an
-  existing 24-client matrix — not appended — while keeping every merged
-  cell and every other client's row references intact.
-- **Self-resetting pivot source**: rather than a pivot table whose source
-  range silently goes stale as new weeks are appended, the macro
-  recalculates the correct range and re-points the pivot every run.
-- **Idempotent by construction**: re-running any step clears/un-merges its
-  own target range first, so nothing has to be manually undone if a step is
-  run twice.
+Columns used: A = client code, B = weekday, C = mCi, D = quantity.
 
-## Stack
+Client grouping is defined once at the top of the module (`GROUP_A_LIST`, `GROUP_B_LIST`). Orders from `PARTNER_CO` are treated as the solution product.
 
-Excel VBA only — no external dependencies, designed to run in a
-locked-down corporate environment where installing a script interpreter
-isn't an option.
+## How to use
 
-## Related project
+1. Open the Excel file that contains the sheets referenced in the constants at the top of the module (`SH_*`).
+2. Press `Alt+F11` → File → Import File → select `OrderPipeline_MultiChannel.bas`.
+3. Press `Alt+F8`, choose a macro, and enter the week number when prompted.
+4. Run the steps in order (1 → 5).
 
-See [pharma-order-processing-pipeline pattern in `order-automation-portfolio`](https://github.com/Heekang0622/order-automation-portfolio)
-for a from-scratch, fully public-data demo of the PDF-extraction +
-cross-validation half of this same overall workflow (Python + VBA), which
-feeds into a pipeline like this one.
+If Korean text is garbled after importing, save the `.bas` file as ANSI (CP949) and import again.
+
+## Configuration
+
+At the top of the module:
+
+- `GROUP_A_LIST` / `GROUP_B_LIST`: client codes per group
+- `SOLUTION_KEY`: client code treated as the solution product
+- `SH_*`: sheet names
+- `ANCHOR_MON`: Monday of week 1, used to calculate the month of each week
+- `MATRIX_INCLUDE_2ND`: whether the Matrix step includes second-round orders
+
+## Notes
+
+- No real business data is included. Excel files are not part of this repository.
+- The code was written for one specific workbook layout. Row/column positions and sheet names will need adjusting for other files.
